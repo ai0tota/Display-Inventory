@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply text-white font-sans antialiased;
+    background: #0B1030;
+    /* iOS safe areas — bottom tab bar notch ke neeche na chale jaye */
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Keyboard focus hamesha dikhe. Mouse click pe nahi (focus-visible).
+     Dark surface par neel outline doob jaata tha — isliye safed. */
+  :focus-visible {
+    outline: 2px solid rgba(255, 255, 255, .75);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  /* Mobile pe numeric input ke spinners jagah khaate hain */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] { -moz-appearance: textfield; }
+}
+
+@layer components {
+  /* Signboard treatment: headings expanded width axis pe.
+     Archivo variable font hone se ye ek hi file se aata hai. */
+  .signboard {
+    font-variation-settings: 'wdth' 112;
+    @apply font-semibold tracking-tight;
+  }
+
+  .eyebrow {
+    @apply text-eyebrow uppercase font-semibold text-white/70;
+    font-variation-settings: 'wdth' 108;
+  }
+
+  /* Quantities aur item codes — tabular figures taaki column me align rahein */
+  .num { @apply font-mono tabular-nums; }
+
+  /* Ambient background — ek hi jagah, poore app ke peeche */
+  .app-bg { @apply fixed inset-0 -z-10 overflow-hidden pointer-events-none; }
+  .app-bg-blob { @apply absolute rounded-full blur-[110px]; }
+
+  /* Glass chrome: sidebar, top bar, bottom tabs, modals */
+  .glass {
+    @apply bg-[#080C24]/50 backdrop-blur-2xl border border-white/[.12];
+  }
+  .glass-edge { /* 1px top highlight */
+    @apply absolute inset-x-6 top-0 h-px bg-gradient-to-r
+           from-transparent via-white/45 to-transparent;
+  }
+
+  /* Data surface. bg-white/[.06] peeche wali cheez ko UJAALA karta tha —
+     chamakte blob ke upar card ka contrast ulta pad jaata. Gehra panel
+     har text ko ek jaisi zameen deta hai, chahe peeche kuch bhi ho. */
+  .card {
+    @apply bg-[#080C24]/55 backdrop-blur-xl border border-white/[.12]
+           rounded-card shadow-[0_2px_24px_rgba(0,0,0,.3)];
+  }
+
+  .field {
+    @apply w-full h-11 px-3 bg-[#080C24]/45 border border-white/15
+           rounded-lg text-[15px] text-white placeholder:text-white/50
+           focus:border-white/60 focus:outline-none focus:ring-2
+           focus:ring-white/15 disabled:bg-white/[.03]
+           disabled:text-white/35;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 h-11 px-4 rounded-lg
+           text-[15px] font-semibold transition-colors
+           disabled:opacity-40 disabled:pointer-events-none;
+  }
+  .btn-primary { @apply btn bg-gulal text-white hover:bg-[#B82A4E]; }
+  .btn-ghost   { @apply btn border border-white/15 bg-white/[.06]
+                        text-white hover:bg-white/[.12]; }
+  .btn-danger  { @apply btn border border-gulal/30 text-gulal hover:bg-gulal/10; }
+  .btn-sm      { @apply h-9 px-3 text-[13px]; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
