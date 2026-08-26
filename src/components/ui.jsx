@@ -184,3 +184,43 @@ export function Field({ label, hint, children }) {
     </label>
   )
 }
+
+/* ---------------- Image Modal ---------------- */
+
+export function ImageModal({ src, alt, onClose }) {
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!src) return
+    const onKey = (e) => e.key === 'Escape' && onClose()
+    document.addEventListener('keydown', onKey)
+    document.body.style.overflow = 'hidden'
+    ref.current?.focus()
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = ''
+    }
+  }, [src, onClose])
+
+  if (!src) return null
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-8">
+      <div className="absolute inset-0 bg-black/90 cursor-zoom-out transition-opacity" onClick={onClose} aria-hidden />
+      <img
+        ref={ref}
+        tabIndex={-1}
+        src={src}
+        alt={alt || "Preview"}
+        className="relative max-w-full max-h-full object-contain rounded-md shadow-2xl outline-none"
+      />
+      <button 
+        onClick={onClose} 
+        className="absolute top-4 right-4 sm:top-6 sm:right-6 text-white/70 hover:text-white text-3xl leading-none w-10 h-10 flex items-center justify-center bg-black/50 rounded-full transition-colors"
+        aria-label="Close"
+      >
+        ×
+      </button>
+    </div>
+  )
+}

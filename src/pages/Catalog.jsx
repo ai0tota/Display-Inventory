@@ -5,7 +5,7 @@ import {
   getItems, createItem, updateItem, deactivateItem,
   uploadPhoto,
 } from '../lib/api'
-import { Spinner, Empty, ErrorNote, Modal, Field } from '../components/ui'
+import { Spinner, Empty, ErrorNote, Modal, Field, ImageModal } from '../components/ui'
 import { useAuth } from '../lib/auth'
 
 export default function Catalog() {
@@ -51,6 +51,7 @@ function ItemsTab({ isAdmin }) {
   const [search, setSearch] = useState('')
   const [groupId, setGroupId] = useState('')
   const [editing, setEditing] = useState(null)
+  const [viewingImage, setViewingImage] = useState(null)
   const [error, setError] = useState('')
 
   async function load() {
@@ -103,7 +104,8 @@ function ItemsTab({ isAdmin }) {
               <li key={i.id} className="card p-3.5 flex items-center gap-3.5">
                 {i.photo_url
                   ? <img src={i.photo_url} alt={i.name} loading="lazy"
-                      className="w-11 h-11 rounded-lg object-cover bg-paper-sunk shrink-0" />
+                      onClick={() => setViewingImage(i.photo_url)}
+                      className="w-11 h-11 rounded-lg object-cover bg-paper-sunk shrink-0 cursor-zoom-in hover:opacity-90 transition-opacity" />
                   : <div className="w-11 h-11 rounded-lg bg-paper-sunk border border-line shrink-0" />}
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold text-[15px] truncate">{i.name}</p>
@@ -124,6 +126,8 @@ function ItemsTab({ isAdmin }) {
       <ItemSheet row={editing} groups={groups}
         onClose={() => setEditing(null)}
         onSaved={() => { setEditing(null); load() }} />
+
+      <ImageModal src={viewingImage} onClose={() => setViewingImage(null)} />
     </>
   )
 }
