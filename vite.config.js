@@ -8,10 +8,16 @@ export default defineConfig({
       output: {
         // Vendor code alag chunk me -> app update hone par
         // browser ko React dobara download nahi karna padta
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          supabase: ['@supabase/supabase-js'],
-        },
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('@supabase')) {
+              return 'supabase';
+            }
+            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router')) {
+              return 'vendor';
+            }
+          }
+        }
       },
     },
   },
