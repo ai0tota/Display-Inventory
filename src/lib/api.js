@@ -45,7 +45,9 @@ export const deactivateLocation = (id) =>
 /* ---------------- Taxonomy ---------------- */
 
 export const getCategories = () =>
-  supabase.from('categories').select('*').order('sort_order').then(unwrap)
+  supabase.from('categories')
+    .select('*, groups(count)')
+    .order('sort_order').then(unwrap)
 
 export const createCategory = (row) =>
   supabase.from('categories').insert(row).select().single().then(unwrap)
@@ -54,7 +56,9 @@ export const updateCategory = (id, patch) =>
   supabase.from('categories').update(patch).eq('id', id).select().single().then(unwrap)
 
 export const getGroups = (categoryId = null) => {
-  let q = supabase.from('groups').select('*, category:categories(id, name, code_prefix)').order('name')
+  let q = supabase.from('groups')
+    .select('*, category:categories(id, name, code_prefix), items(count)')
+    .order('name')
   if (categoryId) q = q.eq('category_id', categoryId)
   return q.then(unwrap)
 }

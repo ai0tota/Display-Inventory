@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   getCategories, createCategory, updateCategory,
   getGroups, createGroup, updateGroup,
@@ -10,7 +11,40 @@ import { useAuth } from '../lib/auth'
 
 export default function Catalog() {
   const { isAdmin } = useAuth()
-  const [tab, setTab] = useState('items')
+
+  // URL hi single source of truth hai. Isi se back button, refresh aur
+  // link share — teeno apne aap sahi jagah pahunchte hain.
+  const [params, setParams] = useSearchParams()
+  const tab     = params.get('tab')   || 'categories'
+  const catId   = params.get('cat')   || ''
+  const groupId = params.get('group') || ''
+
+  // Ek jagah se navigation, taaki har jump history me ek entry banaye
+  const go = (next) => setParams(next, { replace: false })
+
+  // Breadcrumb ko naam chahiye. Ek hi baar yahan laate hain — warna
+  // har row apni alag query chalati.
+  const [names, setNames] = useState(null)
+  useEffect(() => {
+    if (names || (!catId && !groupId)) return
+    Promise.all([getCategories(), getGroups()])
+      .then(([cats, groups]) => setNames({ cats, groups }))
+      .catch(() => {})
+  }, [catId, groupId, names])
+
+  const crumbs = []
+  if (catId || groupId) {
+    crumbs.push({ label: 'Catalog', to: { tab: 'categories' } })
+    if (catId) {
+      crumbs.push({
+        label: names?.cats.find((c) => c.id === catId)?.name ?? '…',
+        to: { tab: 'groups', cat: catId },
+      })
+    }
+    if (groupId) {
+      crumbs.push({ label: names?.groups.find((g) => g.id === groupId)?.name ?? '…' })
+    }
+  }
 
   return (
     <div className="p-5 lg:p-8 max-w-4xl">
@@ -19,11 +53,31 @@ export default function Catalog() {
         Categories hold groups, groups hold items. Item codes come from the category.
       </p>
 
+      {crumbs.length > 0 && (
+        <nav className="mt-4 flex flex-wrap items-center gap-2 text-[13px] font-semibold">
+          {crumbs.map((c, i) => (
+            <span key={i} className="flex items-center gap-2">
+              {i > 0 && <span aria-hidden className="text-ink-45">›</span>}
+              {i < crumbs.length - 1 ? (
+                <button onClick={() => go(c.to)}
+                  className="text-ink-45 hover:text-ink transition-colors">
+                  {c.label}
+                </button>
+              ) : (
+                <span className="text-ink">{c.label}</span>
+              )}
+            </span>
+          ))}
+        </nav>
+      )}
+
       <div className="mt-5 flex gap-1.5">
         {[['items', 'Items'], ['groups', 'Groups'], ['categories', 'Categories']].map(([k, label]) => (
           <button
             key={k}
-            onClick={() => setTab(k)}
+            // Sirf {tab} — purane cat/group filter jaan boojh kar gira rahe hain.
+            // Warna breadcrumb gayab ho jaata aur filter chupke se laga rehta.
+            onClick={() => go({ tab: k })}
             className={`h-9 px-3.5 rounded-lg text-[13px] font-semibold border transition-colors ${
               tab === k ? 'bg-white text-[#0B1030] border-white'
                         : 'bg-paper-raised border-line text-ink-70 hover:bg-paper-sunk'
@@ -35,21 +89,25 @@ export default function Catalog() {
       </div>
 
       <div className="mt-4">
-        {tab === 'items' && <ItemsTab isAdmin={isAdmin} />}
-        {tab === 'groups' && <GroupsTab isAdmin={isAdmin} />}
-        {tab === 'categories' && <CategoriesTab isAdmin={isAdmin} />}
+        {tab === 'items' && <ItemsTab isAdmin={isAdmin} groupId={groupId} go={go} />}
+        {tab === 'groups' && <GroupsTab isAdmin={isAdmin} categoryId={catId} go={go} />}
+        {tab === 'categories' && <CategoriesTab isAdmin={isAdmin} go={go} />}
       </div>
     </div>
   )
 }
 
+// Row par "yahan click ho sakta hai" ka chhota ishaara.
+function Chevron() {
+  return <span aria-hidden className="text-ink-45 text-lg leading-none shrink-0">›</span>
+}
+
 /* ================= ITEMS ================= */
 
-function ItemsTab({ isAdmin }) {
+function ItemsTab({ isAdmin, groupId, go }) {
   const [items, setItems] = useState(null)
   const [groups, setGroups] = useState([])
   const [search, setSearch] = useState('')
-  const [groupId, setGroupId] = useState('')
   const [editing, setEditing] = useState(null)
   const [viewingImage, setViewingImage] = useState(null)
   const [error, setError] = useState('')
@@ -71,19 +129,33 @@ function ItemsTab({ isAdmin }) {
       i.name.toLowerCase().includes(q) || i.item_code.toLowerCase().includes(q))
   }, [items, search])
 
+  const groupName = groups.find((g) => g.id === groupId)?.name
+
+  // Dropdown aur drill-down ek hi cheez hain, isliye dono URL me hi likhte hain.
+  function pickGroup(e) {
+    const id = e.target.value
+    const g = groups.find((x) => x.id === id)
+    const next = { tab: 'items' }
+    if (id) {
+      next.group = id
+      if (g?.category_id) next.cat = g.category_id
+    }
+    go(next)
+  }
+
   return (
     <>
       <div className="flex flex-col sm:flex-row gap-2.5">
         <input className="field sm:flex-1" placeholder="Find an item or code"
           value={search} onChange={(e) => setSearch(e.target.value)} />
-        <select className="field [&>option]:text-[#14121A] [&>option]:bg-white sm:w-56" value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+        <select className="field [&>option]:text-[#14121A] [&>option]:bg-white sm:w-56" value={groupId} onChange={pickGroup}>
           <option value="">All groups</option>
           {groups.map((g) => (
             <option key={g.id} value={g.id}>{g.category.name} › {g.name}</option>
           ))}
         </select>
         {isAdmin && (
-          <button onClick={() => setEditing({})} disabled={!groups.length}
+          <button onClick={() => setEditing(groupId ? { group_id: groupId } : {})} disabled={!groups.length}
             className="btn-primary shrink-0">Add item</button>
         )}
       </div>
@@ -93,10 +165,16 @@ function ItemsTab({ isAdmin }) {
       <div className="mt-4">
         {!items ? <Spinner /> : visible.length === 0 ? (
           <Empty
-            title={groups.length ? 'No items yet' : 'Create a group first'}
+            title={groupName ? `No items in ${groupName} yet`
+              : groups.length ? 'No items yet' : 'Create a group first'}
             hint={groups.length
               ? 'Add the products that should sit on your displays.'
               : 'Items live inside groups, and groups live inside categories.'}
+            action={isAdmin && groupId && !search.trim() && (
+              <button onClick={() => setEditing({ group_id: groupId })} className="btn-primary btn-sm">
+                Add item
+              </button>
+            )}
           />
         ) : (
           <ul className="space-y-2">
@@ -227,7 +305,7 @@ function ItemSheet({ row, groups, onClose, onSaved }) {
 
 /* ================= GROUPS ================= */
 
-function GroupsTab({ isAdmin }) {
+function GroupsTab({ isAdmin, categoryId, go }) {
   const [groups, setGroups] = useState(null)
   const [cats, setCats] = useState([])
   const [editing, setEditing] = useState(null)
@@ -236,31 +314,59 @@ function GroupsTab({ isAdmin }) {
   async function load() {
     setError('')
     try {
-      const [g, c] = await Promise.all([getGroups(), getCategories()])
+      const [g, c] = await Promise.all([getGroups(categoryId || null), getCategories()])
       setGroups(g); setCats(c.filter((x) => x.is_active))
     } catch (e) { setError(e.message) }
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [categoryId])
+
+  const catName = cats.find((c) => c.id === categoryId)?.name
+  const visible = groups?.filter((g) => g.is_active) ?? []
+  // Category ke andar ho to sheet me wahi category pehle se chuni mile.
+  const blank = categoryId ? { category_id: categoryId } : {}
 
   return (
     <>
       {isAdmin && (
-        <button onClick={() => setEditing({})} className="btn-primary btn-sm mb-4">Add group</button>
+        <button onClick={() => setEditing(blank)} className="btn-primary btn-sm mb-4">Add group</button>
       )}
       <ErrorNote message={error} onRetry={load} />
-      {!groups ? <Spinner /> : groups.filter((g) => g.is_active).length === 0 ? (
-        <Empty title="No groups yet" hint="Groups sit between a category and its items — like Gulal under Holi." />
+      {!groups ? <Spinner /> : visible.length === 0 ? (
+        <Empty
+          title={catName ? `No groups in ${catName} yet` : 'No groups yet'}
+          hint="Groups sit between a category and its items — like Gulal under Holi."
+          action={isAdmin && categoryId && (
+            <button onClick={() => setEditing(blank)} className="btn-primary btn-sm">Add group</button>
+          )}
+        />
       ) : (
         <ul className="space-y-2">
-          {groups.filter((g) => g.is_active).map((g) => (
-            <li key={g.id} className="card p-3.5 flex items-center gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold truncate">{g.name}</p>
-                <p className="text-xs text-ink-45 mt-0.5">
-                  {g.category.name} · <span className="num">{g.category.code_prefix}</span>
-                </p>
-              </div>
-              {isAdmin && <button onClick={() => setEditing(g)} className="btn-ghost btn-sm">Edit</button>}
+          {visible.map((g) => (
+            <li key={g.id} className="card p-3.5 flex items-center gap-3
+                                      hover:border-white/25 transition-colors cursor-pointer">
+              <button
+                onClick={() => go({ tab: 'items', cat: categoryId || g.category_id, group: g.id })}
+                className="flex items-center gap-3 min-w-0 flex-1 text-left">
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-baseline gap-2 min-w-0">
+                    <span className="font-semibold truncate">{g.name}</span>
+                    <span className="num text-xs text-ink-45 shrink-0">
+                      {g.items?.[0]?.count ?? 0} items
+                    </span>
+                  </span>
+                  {/* Category ke andar breadcrumb pehle hi bata raha hai — dobara mat likho */}
+                  {!categoryId && (
+                    <span className="block text-xs text-ink-45 mt-0.5">
+                      {g.category.name} · <span className="num">{g.category.code_prefix}</span>
+                    </span>
+                  )}
+                </span>
+                <Chevron />
+              </button>
+              {isAdmin && (
+                <button onClick={(e) => { e.stopPropagation(); setEditing(g) }}
+                  className="btn-ghost btn-sm shrink-0">Edit</button>
+              )}
             </li>
           ))}
         </ul>
@@ -282,7 +388,7 @@ function GroupsTab({ isAdmin }) {
 
 /* ================= CATEGORIES ================= */
 
-function CategoriesTab({ isAdmin }) {
+function CategoriesTab({ isAdmin, go }) {
   const [cats, setCats] = useState(null)
   const [editing, setEditing] = useState(null)
   const [error, setError] = useState('')
@@ -302,16 +408,33 @@ function CategoriesTab({ isAdmin }) {
       {!cats ? <Spinner /> : (
         <ul className="space-y-2">
           {cats.filter((c) => c.is_active).map((c) => (
-            <li key={c.id} className="card p-3.5 flex items-center gap-3">
-              <span className="num text-[13px] font-semibold h-8 px-2.5 rounded-lg
-                               bg-neel/10 text-neel grid place-items-center shrink-0">
-                {c.code_prefix}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold truncate">{c.name}</p>
-                {c.description && <p className="text-xs text-ink-45 truncate mt-0.5">{c.description}</p>}
-              </div>
-              {isAdmin && <button onClick={() => setEditing(c)} className="btn-ghost btn-sm">Edit</button>}
+            <li key={c.id} className="card p-3.5 flex items-center gap-3
+                                      hover:border-white/25 transition-colors cursor-pointer">
+              <button onClick={() => go({ tab: 'groups', cat: c.id })}
+                className="flex items-center gap-3 min-w-0 flex-1 text-left">
+                <span className="num text-[13px] font-semibold h-8 px-2.5 rounded-lg
+                                 bg-neel/10 text-neel grid place-items-center shrink-0">
+                  {c.code_prefix}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-baseline gap-2 min-w-0">
+                    <span className="font-semibold truncate">{c.name}</span>
+                    <span className="num text-xs text-ink-45 shrink-0">
+                      {c.groups?.[0]?.count ?? 0} groups
+                    </span>
+                  </span>
+                  {c.description && (
+                    <span className="block text-xs text-ink-45 truncate mt-0.5">{c.description}</span>
+                  )}
+                </span>
+                <Chevron />
+              </button>
+              {isAdmin && (
+                // stopPropagation zaroori hai — warna Edit dabate hi row bhi
+                // drill down kar jaati aur modal nayi screen par khulta.
+                <button onClick={(e) => { e.stopPropagation(); setEditing(c) }}
+                  className="btn-ghost btn-sm shrink-0">Edit</button>
+              )}
             </li>
           ))}
         </ul>
