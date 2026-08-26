@@ -68,7 +68,7 @@ export default function Users() {
                     {u.role === 'storekeeper' &&
                       ` · ${(u.assignments ?? []).length} location${(u.assignments ?? []).length === 1 ? '' : 's'}`}
                     {!u.is_active && ' · disabled'}
-                    {!u.last_sign_in_at && ' · never signed in'}
+                    {' · '}{signedIn(u.last_sign_in_at)}
                   </p>
                 </div>
                 <button onClick={() => setEditing(u)} className="btn-ghost btn-sm shrink-0">Edit</button>
@@ -260,4 +260,18 @@ function UserSheet({ row, companies, locations, me, onClose, onSaved }) {
       <ErrorNote message={error} />
     </Modal>
   )
+}
+
+// "Never signed in" ek warning hai — account bana par kaam nahi aaya.
+// Baaki sabke liye aakhri login dikhao, taaki pata chale kaun sach me
+// app use kar raha hai.
+function signedIn(ts) {
+  if (!ts) return <span className="text-haldi">never signed in</span>
+  const mins = Math.floor((Date.now() - new Date(ts)) / 60000)
+  if (mins < 60)   return 'active now'
+  if (mins < 1440) return `last seen ${Math.floor(mins / 60)}h ago`
+  const days = Math.floor(mins / 1440)
+  if (days < 30)   return `last seen ${days}d ago`
+  return `last seen ${new Date(ts).toLocaleDateString('en-IN',
+           { day: 'numeric', month: 'short' })}`
 }
