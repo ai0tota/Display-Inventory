@@ -131,6 +131,20 @@ export const moveStock = ({
     p_notes: notes,
   }).then(unwrap)
 
+/**
+ * Kai items ek saath display par. Server par ek hi transaction —
+ * ek item galat hua to poora batch rollback, aadha kaam nahi hota.
+ */
+export const bulkStockIn = ({ locationId, items, reason = 'new_stock',
+                              personName = null, notes = null }) =>
+  supabase.rpc('bulk_stock_in', {
+    p_location_id: locationId,
+    p_items: items,              // [{ item_id, qty }]
+    p_reason: reason,
+    p_person_name: personName,
+    p_notes: notes,
+  }).then(unwrap)
+
 /* ---------------- Templates ---------------- */
 
 export const getTemplates = () =>

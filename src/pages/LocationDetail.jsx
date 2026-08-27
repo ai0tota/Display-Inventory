@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { getLocation, getLocationStock, getItems, recordCheck, moveStock, uploadPhoto } from '../lib/api'
+import {
+  getLocation, getLocationStock, getItems, getCategories, getGroups,
+  recordCheck, bulkStockIn, uploadPhoto,
+} from '../lib/api'
 import {
   PigmentBar, StatusChip, Spinner, Empty, ErrorNote, Modal, Field,
   STATUS, STATUS_ORDER,
@@ -334,18 +337,30 @@ function CheckSheet({ row, locationId, onClose, onSaved }) {
 }
 
 /* ---------------- Add item sheet ----------------
-   Ye us pehle din ke liye hai jab cheez display par pahunchti hai — catalog
-   me se chuno, ginti likho, aur andar. Reason yahan tay hai: 'new_stock'.
-   Uske baad ki har ginti Count se hoti hai. */
+   502 items ki ek lambi list phone par bekaar hai — display ke saamne khade
+   ho kar koi scroll nahi karta. Isliye teen kadam: category chuno, groups
+   chuno, phir sirf unhi ki ginti bharo.
 
-const RESULT_LIMIT = 40
+   Reason yahan tay hai: 'new_stock'. */
+
+const STEP_TITLE = {
+  category:   'Pick a category',
+  groups:     'Pick groups',
+  quantities: 'Set quantities',
+}
 
 function AddItemSheet({ open, locationId, stock, onClose, onSaved }) {
-  const [items, setItems] = useState(null)
+  const [step, setStep] = useState('category')
+
+  const [cats, setCats] = useState(null)
+  const [groups, setGroups] = useState([])
+  const [items, setItems] = useState([])
   const [loadError, setLoadError] = useState('')
+
+  const [category, setCategory] = useState(null)
+  const [picked, setPicked] = useState(new Set())  // group ids
+  const [qty, setQty] = useState({})               // item id -> jo type hua
   const [search, setSearch] = useState('')
-  const [selected, setSelected] = useState(null)
-  const [qty, setQty] = useState('')
   const [person, setPerson] = useState('')
   const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
@@ -353,44 +368,91 @@ function AddItemSheet({ open, locationId, stock, onClose, onSaved }) {
 
   useEffect(() => {
     if (!open) return
-    setItems(null); setLoadError(''); setSearch(''); setSelected(null)
-    setQty(''); setPerson(''); setNotes(''); setError('')
+    setStep('category'); setCategory(null); setPicked(new Set()); setQty({})
+    setSearch(''); setPerson(''); setNotes(''); setError(''); setLoadError('')
+    setCats(null)
 
+    // Teeno chhoti tables hain — ek baar me utha lo, phir har kadam
+    // bina network ke chalta hai
     let alive = true
-    getItems()
-      .then((rows) => { if (alive) setItems(rows) })
+    Promise.all([getCategories(), getGroups(), getItems()])
+      .then(([c, g, i]) => { if (alive) { setCats(c); setGroups(g); setItems(i) } })
       .catch((e) => { if (alive) setLoadError(e.message) })
     return () => { alive = false }
   }, [open])
 
-  // Jo pehle se display par hai use is raste se dobara jodna uski ginti
-  // chupke se do guna kar dega. Aisi cheez ki ginti Count se badalti hai.
+  // Is display par abhi kya rakha hai. Page ne ye pehle hi utha rakha hai,
+  // isliye live stock dikhane ke liye dobara server jaane ki zaroorat nahi.
   const onDisplay = useMemo(
-    () => new Set((stock ?? []).map((r) => r.item.id)),
+    () => new Map((stock ?? []).map((s) => [s.item_id, Number(s.actual_qty)])),
     [stock])
 
-  const candidates = useMemo(
-    () => (items ?? []).filter((it) => !onDisplay.has(it.id)),
-    [items, onDisplay])
+  const itemsByGroup = useMemo(() => {
+    const m = new Map()
+    for (const it of items) {
+      const gid = it.group?.id
+      if (!gid) continue
+      if (!m.has(gid)) m.set(gid, [])
+      m.get(gid).push(it)
+    }
+    return m
+  }, [items])
 
-  // 395 rows ki dropdown koi nahi padhta — pehle 40 dikhao, baaki search kare.
-  const matches = useMemo(() => {
+  const countByCategory = useMemo(() => {
+    const m = new Map()
+    for (const it of items) {
+      const cid = it.group?.category?.id
+      if (cid) m.set(cid, (m.get(cid) ?? 0) + 1)
+    }
+    return m
+  }, [items])
+
+  // Khaali category kholne ka koi matlab nahi — usme se kuch add hi nahi hoga
+  const categories = useMemo(
+    () => (cats ?? []).filter((c) => countByCategory.get(c.id)),
+    [cats, countByCategory])
+
+  const categoryGroups = useMemo(
+    () => (category ? groups.filter((g) => g.category_id === category.id) : []),
+    [groups, category])
+
+  // Chune hue groups ke saare items, code se sorted
+  const chosen = useMemo(() => {
+    const rows = []
+    for (const gid of picked) rows.push(...(itemsByGroup.get(gid) ?? []))
+    return rows.sort((a, b) => a.item_code.localeCompare(b.item_code))
+  }, [picked, itemsByGroup])
+
+  const shown = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const rows = q
-      ? candidates.filter((it) =>
-          it.name.toLowerCase().includes(q) || it.item_code.toLowerCase().includes(q))
-      : candidates
-    return rows.slice(0, RESULT_LIMIT)
-  }, [candidates, search])
+    if (!q) return chosen
+    return chosen.filter((it) =>
+      it.name.toLowerCase().includes(q) || it.item_code.toLowerCase().includes(q))
+  }, [chosen, search])
+
+  // Khaali ya 0 ka matlab "is item ko chhod do". Ginti `chosen` par lagti hai,
+  // `shown` par nahi — search se chhupa hua bhara item bhi jayega.
+  const filled = useMemo(
+    () => chosen
+      .map((it) => ({ id: it.id, qty: Number(qty[it.id]) }))
+      .filter((f) => Number.isFinite(f.qty) && f.qty > 0),
+    [chosen, qty])
+
+  // 0.1 + 0.2 wali float gandagi footer me nahi dikhni chahiye
+  const totalUnits = Math.round(filled.reduce((sum, f) => sum + f.qty, 0) * 1000) / 1000
+
+  function toggleGroup(id) {
+    const next = new Set(picked)
+    next.has(id) ? next.delete(id) : next.add(id)
+    setPicked(next)
+  }
 
   async function save() {
     setError(''); setBusy(true)
     try {
-      await moveStock({
+      await bulkStockIn({
         locationId,
-        itemId: selected.id,
-        direction: 'in',
-        qty: Number(qty),
+        items: filled.map((f) => ({ item_id: f.id, qty: Number(f.qty) })),
         reason: 'new_stock',
         personName: person.trim() || null,
         notes: notes.trim() || null,
@@ -404,101 +466,166 @@ function AddItemSheet({ open, locationId, stock, onClose, onSaved }) {
     }
   }
 
-  const entered = qty === '' ? null : Number(qty)
-  const blocked = busy || !selected || qty === '' || entered <= 0
-  const nothingLeft = items !== null && candidates.length === 0
+  const footer =
+    step === 'category' ? (
+      <button onClick={onClose} className="btn-ghost">Cancel</button>
+    ) : step === 'groups' ? (
+      <>
+        <button onClick={() => setStep('category')} className="btn-ghost">Back</button>
+        <button
+          onClick={() => setStep('quantities')}
+          disabled={picked.size === 0}
+          className="btn-primary"
+        >
+          Next — {picked.size} group{picked.size === 1 ? '' : 's'}
+        </button>
+      </>
+    ) : (
+      <>
+        <button onClick={() => setStep('groups')} className="btn-ghost">Back</button>
+        <button onClick={save} disabled={busy || filled.length === 0} className="btn-primary">
+          {busy
+            ? 'Saving…'
+            : `Add ${filled.length} item${filled.length === 1 ? '' : 's'} (${fmt(totalUnits)} units)`}
+        </button>
+      </>
+    )
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Add an item to this display"
-      footer={
-        <>
-          <button onClick={onClose} className="btn-ghost">Cancel</button>
-          <button onClick={save} disabled={blocked} className="btn-primary">
-            {busy ? 'Saving…' : 'Add to display'}
-          </button>
-        </>
-      }
-    >
+    <Modal open={open} onClose={onClose} title={STEP_TITLE[step]} footer={footer}>
       <ErrorNote message={loadError} />
 
-      {items === null && !loadError ? (
+      {loadError ? null : cats === null ? (
         <Spinner />
-      ) : nothingLeft ? (
-        <Empty
-          title="Everything is already here"
-          hint="Every catalog item is already on this display. Use Count to change quantities."
-        />
+      ) : step === 'category' ? (
+        categories.length === 0 ? (
+          <Empty title="Nothing in the catalog yet"
+            hint="Add categories and items from the Catalog page first." />
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            {categories.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => { setCategory(c); setPicked(new Set()); setStep('groups') }}
+                className="border border-line rounded-lg p-3 text-left hover:bg-paper-sunk transition-colors"
+              >
+                <span className="num text-[13px] font-semibold h-8 px-2.5 rounded-lg
+                                 bg-neel/10 text-neel inline-grid place-items-center">
+                  {c.code_prefix}
+                </span>
+                <span className="block font-semibold mt-2 truncate">{c.name}</span>
+                <span className="num block text-xs text-ink-45 mt-0.5">
+                  {countByCategory.get(c.id)} item{countByCategory.get(c.id) === 1 ? '' : 's'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )
+      ) : step === 'groups' ? (
+        <>
+          <span className="eyebrow block mb-2">{category?.name}</span>
+
+          {categoryGroups.length === 0 ? (
+            <Empty title="No groups here" hint="This category has no groups yet." />
+          ) : (
+            <>
+              <div className="border border-line rounded-lg max-h-72 overflow-y-auto divide-y divide-line">
+                {categoryGroups.map((g) => {
+                  const list = itemsByGroup.get(g.id) ?? []
+                  // Kaun se groups pehle se cover ho chuke hain — ek nazar me
+                  const here = list.filter((it) => onDisplay.has(it.id)).length
+                  return (
+                    <label key={g.id}
+                      className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-paper-sunk">
+                      <input type="checkbox" checked={picked.has(g.id)} onChange={() => toggleGroup(g.id)} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[15px] truncate">{g.name}</span>
+                      </span>
+                      <span className="num text-xs text-ink-45 shrink-0 text-right">
+                        {list.length} items
+                        {here > 0 && (
+                          <span className="block text-mehndi">{here} on display</span>
+                        )}
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+
+              {categoryGroups.length > 1 && (
+                <button
+                  onClick={() => setPicked(
+                    picked.size === categoryGroups.length
+                      ? new Set()
+                      : new Set(categoryGroups.map((g) => g.id))
+                  )}
+                  className="mt-2 text-[13px] font-semibold text-neel">
+                  {picked.size === categoryGroups.length ? 'Clear all' : 'Select all'}
+                </button>
+              )}
+            </>
+          )}
+        </>
       ) : (
         <>
+          {/* Bada group chuna ho to ismein se dhoondhna padta hai */}
           <input
             className="field"
-            autoFocus
-            placeholder="Search 395 items by name or code"
+            placeholder="Find an item or code"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
 
-          <ul className="mt-3 max-h-72 overflow-y-auto space-y-1.5">
-            {matches.length === 0 ? (
-              <li className="py-3 text-sm text-ink-45">No item matches that.</li>
-            ) : matches.map((it) => (
-              <li key={it.id}>
-                <button
-                  type="button"
-                  aria-pressed={selected?.id === it.id}
-                  onClick={() => setSelected(it)}
-                  className={`w-full text-left rounded-lg border p-2.5 flex items-center gap-3 transition-colors ${
-                    selected?.id === it.id
-                      ? 'bg-white/10 border-white/25'
-                      : 'border-line hover:bg-paper-sunk'
-                  }`}
-                >
+          <ul className="mt-3 border border-line rounded-lg max-h-80 overflow-y-auto divide-y divide-line">
+            {shown.length === 0 ? (
+              <li className="px-3 py-3 text-sm text-ink-45">No item matches that.</li>
+            ) : shown.map((it) => {
+              const here = onDisplay.get(it.id)
+              return (
+                <li key={it.id} className="flex items-center gap-3 px-3 py-2.5">
                   <Thumb url={it.photo_url} name={it.name} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-semibold text-[15px] truncate">{it.name}</span>
-                    <span className="num block text-xs text-ink-45 mt-0.5 truncate">
-                      {[
-                        it.item_code,
-                        [it.group?.category?.name, it.group?.name].filter(Boolean).join(' › '),
-                        it.pack_size,
-                      ].filter(Boolean).join(' · ')}
-                    </span>
-                  </span>
-                </button>
-              </li>
-            ))}
+
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-[15px] truncate">{it.name}</p>
+                    <p className="num text-xs text-ink-45 mt-0.5 truncate">
+                      {it.item_code}
+                      {it.pack_size && ` · ${it.pack_size}`}
+                    </p>
+                    {/* Yahi wo jaankari hai jiske liye warna display tak jaana padta */}
+                    <p className={`num text-xs mt-0.5 ${here > 0 ? 'text-mehndi' : 'text-ink-45'}`}>
+                      {here === undefined ? 'not on display' : `on display: ${fmt(here)}`}
+                    </p>
+                  </div>
+
+                  <input
+                    type="number" min="0" step="0.001" inputMode="decimal"
+                    className="field num w-20 shrink-0"
+                    placeholder="0"
+                    value={qty[it.id] ?? ''}
+                    onChange={(e) => setQty((q) => ({ ...q, [it.id]: e.target.value }))}
+                  />
+                </li>
+              )
+            })}
           </ul>
 
-          {/* Ginti tabhi poochho jab pata ho kis cheez ki ginti hai */}
-          {selected && (
-            <div className="mt-5">
-              <Field label="How many are on the display now?">
-                <input
-                  type="number" min="0.001" step="0.001" inputMode="decimal"
-                  className="field num"
-                  value={qty}
-                  onChange={(e) => setQty(e.target.value)}
-                />
-              </Field>
+          <div className="mt-5">
+            <Field label="Added by" hint="Optional — helps when you review the log later.">
+              <input className="field" placeholder="Name" value={person}
+                onChange={(e) => setPerson(e.target.value)} />
+            </Field>
 
-              <Field label="Added by" hint="Optional — helps when you review the log later.">
-                <input className="field" placeholder="Name" value={person}
-                  onChange={(e) => setPerson(e.target.value)} />
-              </Field>
+            <Field label="Note" hint="Optional. Applies to every item in this batch.">
+              <textarea rows={2} className="field h-auto py-2.5" placeholder="Anything worth recording"
+                value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </Field>
+          </div>
 
-              <Field label="Note">
-                <textarea rows={2} className="field h-auto py-2.5" placeholder="Anything worth recording"
-                  value={notes} onChange={(e) => setNotes(e.target.value)} />
-              </Field>
-            </div>
-          )}
-
+          {/* Iske bina log naya total type kar dete hain aur stock chupke se
+              do guna ho jata hai */}
           <p className="text-xs text-ink-45">
-            This item has no target quantity yet, so it will show as Unplanned
-            until an admin sets one from a template.
+            Quantities are added to what is already on the display.
           </p>
         </>
       )}
