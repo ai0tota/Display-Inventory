@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getCompanies, getLocations, createLocation, updateLocation, deactivateLocation } from '../lib/api'
 import { Spinner, Empty, ErrorNote, Modal, Field } from '../components/ui'
 import { useAuth } from '../lib/auth'
+import { visibleCompanies, visibleLocations } from '../lib/scope'
 
 export default function Locations() {
-  const { isAdmin } = useAuth()
+  const { isAdmin, profile } = useAuth()
   const [companies, setCompanies] = useState([])
   const [locations, setLocations] = useState(null)
   const [companyId, setCompanyId] = useState('')
@@ -21,7 +22,17 @@ export default function Locations() {
   }
   useEffect(() => { load() }, [companyId])
 
-  const active = (locations ?? []).filter((l) => l.is_active)
+  const active = useMemo(
+    () => visibleLocations(profile, locations).filter((l) => l.is_active),
+    [profile, locations]
+  )
+
+  // Chips profile se bante hain, active list se nahi — warna ek company chunte
+  // hi baaki chips gayab ho jate aur wapas 'All' par aane ka raasta hi na bachta
+  const chipCompanies = useMemo(
+    () => visibleCompanies(profile, companies),
+    [profile, companies]
+  )
 
   return (
     <div className="p-5 lg:p-8 max-w-4xl">
@@ -40,7 +51,7 @@ export default function Locations() {
       {/* Company filter — chips, kyunki paanch hi hain */}
       <div className="mt-5 flex gap-1.5 overflow-x-auto -mx-1 px-1 pb-1">
         <Chip active={companyId === ''} onClick={() => setCompanyId('')}>All</Chip>
-        {companies.map((c) => (
+        {chipCompanies.map((c) => (
           <Chip key={c.id} active={companyId === c.id} onClick={() => setCompanyId(c.id)}>
             {c.name}
           </Chip>
@@ -51,8 +62,10 @@ export default function Locations() {
         <ErrorNote message={error} onRetry={load} />
         {!locations ? <Spinner /> : active.length === 0 ? (
           <Empty
-            title="No locations here yet"
-            hint="Add the first display point for this company."
+            title={isAdmin ? 'No locations here yet' : 'Nothing assigned to you'}
+            hint={isAdmin
+              ? 'Add the first display point for this company.'
+              : 'Ask a super admin to give you access to a display.'}
             action={isAdmin ? <button onClick={() => setEditing({})} className="btn-primary">Add location</button> : null}
           />
         ) : (

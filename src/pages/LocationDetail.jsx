@@ -5,6 +5,8 @@ import {
   PigmentBar, StatusChip, Spinner, Empty, ErrorNote, Modal, Field,
   STATUS, STATUS_ORDER,
 } from '../components/ui'
+import { useAuth } from '../lib/auth'
+import { locationFilter } from '../lib/scope'
 
 const FILTERS = [
   { key: 'problems', label: 'Needs attention' },
@@ -15,6 +17,7 @@ const FILTERS = [
 
 export default function LocationDetail() {
   const { id } = useParams()
+  const { profile } = useAuth()
   const [loc, setLoc] = useState(null)
   const [stock, setStock] = useState(null)
   const [filter, setFilter] = useState('problems')
@@ -53,6 +56,27 @@ export default function LocationDetail() {
       STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) ||
       a.item.item_code.localeCompare(b.item.item_code))
   }, [stock, filter, search])
+
+  // List se ye display chhup jaye lekin URL seedha type kar liya jaye — RLS
+  // to rok hi deta hai, par wahan se aaya "no rows" wala DB message padhne
+  // layak nahi. Isliye yahan saaf jawab dete hain.
+  const outOfScope = (loc && !locationFilter(profile)(loc)) || (error && !loc && isBlocked(error))
+
+  if (outOfScope) {
+    return (
+      <div className="p-5 lg:p-8 max-w-4xl">
+        <Link to="/locations" className="text-[13px] font-semibold text-ink-45 hover:text-ink">
+          ← Locations
+        </Link>
+        <div className="mt-6">
+          <Empty
+            title="Not your display"
+            hint="This location isn't assigned to you. Ask a super admin if you need access."
+          />
+        </div>
+      </div>
+    )
+  }
 
   if (error && !loc) return <div className="p-5 lg:p-8"><ErrorNote message={error} onRetry={load} /></div>
   if (!loc || !stock) return <Spinner />
@@ -494,6 +518,10 @@ function Thumb({ url, name, size = 44 }) {
       style={{ width: size, height: size }} aria-hidden />
   )
 }
+
+// PostgREST .single() ko RLS ne rok diya to yahi shakayat aati hai
+const isBlocked = (msg) =>
+  /multiple \(or no\) rows|0 rows|PGRST116/i.test(msg ?? '')
 
 // 20.000 ko 20 dikhao, 2.500 ko 2.5 — trailing zeros shor hain
 const fmt = (n) => Number(n).toString()

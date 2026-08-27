@@ -3,6 +3,7 @@ import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { getAuditLog, getLocations } from '../lib/api'
 import { useAuth } from '../lib/auth'
+import { locationFilter, visibleLocations } from '../lib/scope'
 import { Spinner, Empty, ErrorNote, ImageModal, REASON_LABEL } from '../components/ui'
 
 // Kya hua, seedhi bhasha me. DB ke action codes user ko dikhane layak nahi.
@@ -19,7 +20,7 @@ const ACTION_LABEL = {
 }
 
 export default function Activity() {
-  const { isAdmin } = useAuth()
+  const { isAdmin, profile } = useAuth()
   const [rows, setRows] = useState(null)
   const [locations, setLocations] = useState([])
   const [locationId, setLocationId] = useState('')
@@ -40,10 +41,20 @@ export default function Activity() {
   }
   useEffect(() => { load() }, [locationId])
 
-  const visible = useMemo(
-    () => (rows ?? []).filter((r) => !action || r.action === action),
-    [rows, action]
+  // Dropdown me sirf wahi jagah jinka user haqdaar hai
+  const scopedLocations = useMemo(
+    () => visibleLocations(profile, locations),
+    [profile, locations]
   )
+
+  // RLS pehle hi paraya data rok deta hai, par log par bharosa server tak
+  // hi rakhte hain — yahan bhi wahi chhalni lagti hai
+  const visible = useMemo(() => {
+    const allowed = locationFilter(profile)
+    return (rows ?? []).filter(
+      (r) => allowed(r.location) && (!action || r.action === action)
+    )
+  }, [rows, action, profile])
 
   // CSV aur PDF dono ek hi tasveer dikhate hain — do jagah banate to
   // ek din columns alag ho jate
@@ -98,7 +109,7 @@ export default function Activity() {
 
       doc.setFontSize(9)
       doc.setTextColor(120)
-      const picked = locationId ? locations.find((l) => l.id === locationId) : null
+      const picked = locationId ? scopedLocations.find((l) => l.id === locationId) : null
       const scope = [
         picked ? `${picked.company.code} — ${picked.name}` : 'All locations',
         action ? (ACTION_LABEL[action] ?? action) : 'Everything',
@@ -203,7 +214,7 @@ export default function Activity() {
       <div className="mt-5 flex flex-col sm:flex-row gap-2.5">
         <select className="field [&>option]:text-[#14121A] [&>option]:bg-white sm:flex-1" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
           <option value="">All locations</option>
-          {locations.map((l) => (
+          {scopedLocations.map((l) => (
             <option key={l.id} value={l.id}>{l.company.code} — {l.name}</option>
           ))}
         </select>

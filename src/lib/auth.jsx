@@ -12,11 +12,19 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let alive = true
 
+    // Assignments profile ke saath hi aate hain — inke bina UI ko pata hi
+    // nahi chalta ki storekeeper kis display ka hai. user_locations par
+    // "read own assignments" policy hai, isliye har user apni list padh leta hai.
     async function loadProfile(uid) {
       if (!uid) return null
       const { data } = await supabase
-        .from('profiles').select('*').eq('id', uid).single()
-      return data
+        .from('profiles')
+        .select('*, assignments:user_locations(location_id, location:locations(id, company_id))')
+        .eq('id', uid)
+        .single()
+      if (!data) return null
+      // Aage har jagah .assignments par bharosa kiya jata hai — null kabhi na jaye
+      return { ...data, assignments: data.assignments ?? [] }
     }
 
     // Page refresh ke baad session wapas laao
