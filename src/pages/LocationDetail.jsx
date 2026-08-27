@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   getLocation, getLocationStock, getItems, getCategories, getGroups,
-  recordCheck, bulkStockIn, uploadPhoto,
+  recordCheck, bulkStockIn, uploadPhoto, moveStock,
 } from '../lib/api'
 import {
   PigmentBar, StatusChip, Spinner, Empty, ErrorNote, Modal, Field,
-  STATUS, STATUS_ORDER,
+  STATUS, STATUS_ORDER, MOVE_REASONS,
 } from '../components/ui'
 import { useAuth } from '../lib/auth'
 import { locationFilter } from '../lib/scope'
@@ -26,6 +26,7 @@ export default function LocationDetail() {
   const [filter, setFilter] = useState('problems')
   const [search, setSearch] = useState('')
   const [checking, setChecking] = useState(null) // item row being verified
+  const [moving, setMoving] = useState(null)     // item row being moved in/out
   const [adding, setAdding] = useState(false)    // catalog item being put on the display
   const [error, setError] = useState('')
 
@@ -195,10 +196,15 @@ export default function LocationDetail() {
                   </div>
                 </div>
 
-                <div className="shrink-0">
+                <div className="shrink-0 flex flex-col gap-1.5">
                   <button onClick={() => setChecking(r)} className="btn-primary btn-sm">
                     Count
                   </button>
+                  {profile?.role !== 'super_admin' && (
+                    <button onClick={() => setMoving(r)} className="btn-ghost btn-sm">
+                      Move
+                    </button>
+                  )}
                 </div>
               </li>
             ))}
@@ -211,6 +217,13 @@ export default function LocationDetail() {
         locationId={id}
         onClose={() => setChecking(null)}
         onSaved={() => { setChecking(null); load() }}
+      />
+
+      <MoveSheet
+        row={moving}
+        locationId={id}
+        onClose={() => setMoving(null)}
+        onSaved={() => { setMoving(null); load() }}
       />
 
       <AddItemSheet
@@ -628,6 +641,180 @@ function AddItemSheet({ open, locationId, stock, onClose, onSaved }) {
             Quantities are added to what is already on the display.
           </p>
         </>
+      )}
+
+      <ErrorNote message={error} />
+    </Modal>
+  )
+}
+
+/* ---------------- Move sheet ----------------
+   CheckSheet ginti ka natija likhta hai (absolute). Ye harkat likhta hai
+   (delta) — kitna aaya ya gaya, aur kyon. Do alag sawaal, do alag parche. */
+
+const DIRECTIONS = [
+  { key: 'in',  label: 'Stock in',  on: 'bg-mehndi text-white', verb: 'Add to display' },
+  { key: 'out', label: 'Stock out', on: 'bg-gulal text-white',  verb: 'Take off display' },
+]
+
+function MoveSheet({ row, locationId, onClose, onSaved }) {
+  const [direction, setDirection] = useState('in')
+  const [qty, setQty] = useState('')
+  const [reason, setReason] = useState('')
+  const [person, setPerson] = useState('')
+  const [notes, setNotes] = useState('')
+  const [file, setFile] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (row) {
+      setDirection('in'); setQty(''); setReason('')
+      setPerson(''); setNotes(''); setFile(null); setError('')
+    }
+  }, [row])
+
+  if (!row) return null
+
+  function pickDirection(d) {
+    setDirection(d)
+    setReason('')
+  }
+
+  async function save() {
+    setError(''); setBusy(true)
+    try {
+      const photoUrl = file ? await uploadPhoto(file, 'checks') : null
+      await moveStock({
+        locationId,
+        itemId: row.item.id,
+        direction,
+        qty: Number(qty),
+        reason: reason || null,
+        personName: person.trim() || null,
+        photoUrl,
+        notes: notes.trim() || null,
+      })
+      onSaved()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const dir = DIRECTIONS.find((d) => d.key === direction)
+  const current = Number(row.actual_qty)
+  const entered = qty === '' ? null : Number(qty)
+  const outward = direction === 'out'
+
+  const overdraw = outward && entered !== null && entered > current
+  const next = entered === null ? null
+    : Math.round((current + (outward ? -entered : entered)) * 1000) / 1000
+
+  const needsPerson = outward && !person.trim()
+  const blocked = busy || qty === '' || entered <= 0 || overdraw || needsPerson
+
+  return (
+    <Modal
+      open={!!row}
+      onClose={onClose}
+      title={row.item.name}
+      footer={
+        <>
+          <button onClick={onClose} className="btn-ghost">Cancel</button>
+          <button onClick={save} disabled={blocked} className="btn-primary">
+            {busy ? 'Saving…' : dir.verb}
+          </button>
+        </>
+      }
+    >
+      <div className="flex items-center gap-3 mb-5">
+        <Thumb url={row.item.photo_url} name={row.item.name} size={52} />
+        <div>
+          <p className="num text-xs text-ink-45">{row.item.item_code}</p>
+          <p className="num text-sm mt-0.5">
+            On the display now <b>{fmt(row.actual_qty)}</b> {row.item.uom}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex gap-2 mb-5">
+        {DIRECTIONS.map((d) => (
+          <button
+            key={d.key}
+            type="button"
+            aria-pressed={direction === d.key}
+            onClick={() => pickDirection(d.key)}
+            className={`flex-1 h-11 rounded-lg text-[15px] font-semibold transition-colors ${
+              direction === d.key ? d.on : 'btn-ghost'
+            }`}
+          >
+            {d.label}
+          </button>
+        ))}
+      </div>
+
+      <Field label={`Quantity (${row.item.uom})`}>
+        <input
+          type="number" min="0" step="0.001" inputMode="decimal" autoFocus
+          className="field num text-lg"
+          value={qty}
+          onChange={(e) => setQty(e.target.value)}
+        />
+      </Field>
+
+      <Field label="Reason">
+        <select
+          className="field [&>option]:text-[#14121A] [&>option]:bg-white"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        >
+          <option value="">Not stated</option>
+          {MOVE_REASONS[direction].map(([k, label]) => (
+            <option key={k} value={k}>{label}</option>
+          ))}
+        </select>
+      </Field>
+
+      <Field
+        label={outward ? 'Handled by (required)' : 'Handled by'}
+        hint={outward
+          ? 'Stock leaving the display must be signed for.'
+          : 'Optional — helps when you review the log later.'}
+      >
+        <input className="field" placeholder="Name" value={person}
+          onChange={(e) => setPerson(e.target.value)} />
+      </Field>
+
+      <Field label="Photo" hint="Optional. Useful proof when something is missing.">
+        <input
+          type="file" accept="image/*" capture="environment"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          className="block w-full text-sm text-ink-70 file:mr-3 file:h-9 file:px-3
+                     file:rounded-lg file:border file:border-line file:bg-paper-sunk
+                     file:text-[13px] file:font-semibold file:text-ink"
+        />
+      </Field>
+
+      <Field label="Note">
+        <textarea rows={2} className="field h-auto py-2.5" placeholder="Anything worth recording"
+          value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </Field>
+
+      {overdraw ? (
+        <p className="text-sm text-gulal">
+          Only {fmt(current)} on the display right now.
+        </p>
+      ) : next !== null && (
+        <div className="flex items-center gap-2">
+          <span className="num text-sm">
+            <span className="text-ink-45">{fmt(current)}</span>
+            <span className="mx-1.5 text-ink-45">→</span>
+            <b className="font-semibold">{fmt(next)}</b>
+          </span>
+          <StatusChip status={statusFor(next, row.expected_qty)} />
+        </div>
       )}
 
       <ErrorNote message={error} />
