@@ -57,7 +57,12 @@ export default function Shell() {
       <header className="lg:hidden sticky top-0 z-30 h-14 px-4 flex items-center justify-between
                          glass border-b border-line">
         <Mark />
-        <button onClick={signOut} className="text-[13px] font-semibold text-ink-45">Sign out</button>
+        <div className="flex items-center gap-3">
+          <span className="text-[13px] font-medium text-ink-70 truncate max-w-[100px] sm:max-w-[150px]">
+            {profile?.full_name}
+          </span>
+          <button onClick={signOut} className="text-[13px] font-semibold text-ink-45 hover:text-white">Sign out</button>
+        </div>
       </header>
 
       <main className="flex-1 min-w-0 pb-20 lg:pb-0">
