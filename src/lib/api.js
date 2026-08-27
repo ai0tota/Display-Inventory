@@ -165,7 +165,7 @@ export const applyTemplate = ({ templateId, locationIds, mode = 'add_only', zero
 export const getAuditLog = ({ locationId = null, limit = 100 } = {}) => {
   let q = supabase
     .from('display_audit_log')
-    .select('*, item:items(item_code, name), location:locations(name, company:companies(code))')
+    .select('*, item:items(item_code, name, photo_url), location:locations(name, company:companies(code))')
     .order('created_at', { ascending: false })
     .limit(limit)
   if (locationId) q = q.eq('location_id', locationId)

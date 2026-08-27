@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { getLocation, getLocationStock, getItems, recordCheck, moveStock, uploadPhoto } from '../lib/api'
 import {
   PigmentBar, StatusChip, Spinner, Empty, ErrorNote, Modal, Field,
-  STATUS, STATUS_ORDER, MOVE_REASONS,
+  STATUS, STATUS_ORDER,
 } from '../components/ui'
 
 const FILTERS = [
@@ -20,7 +20,6 @@ export default function LocationDetail() {
   const [filter, setFilter] = useState('problems')
   const [search, setSearch] = useState('')
   const [checking, setChecking] = useState(null) // item row being verified
-  const [moving, setMoving] = useState(null)     // item row being stocked in/out
   const [adding, setAdding] = useState(false)    // catalog item being put on the display
   const [error, setError] = useState('')
 
@@ -169,11 +168,8 @@ export default function LocationDetail() {
                   </div>
                 </div>
 
-                <div className="flex gap-2 shrink-0">
-                  <button onClick={() => setMoving(r)} className="btn-primary btn-sm">
-                    Move
-                  </button>
-                  <button onClick={() => setChecking(r)} className="btn-ghost btn-sm">
+                <div className="shrink-0">
+                  <button onClick={() => setChecking(r)} className="btn-primary btn-sm">
                     Count
                   </button>
                 </div>
@@ -188,13 +184,6 @@ export default function LocationDetail() {
         locationId={id}
         onClose={() => setChecking(null)}
         onSaved={() => { setChecking(null); load() }}
-      />
-
-      <MoveSheet
-        row={moving}
-        locationId={id}
-        onClose={() => setMoving(null)}
-        onSaved={() => { setMoving(null); load() }}
       />
 
       <AddItemSheet
@@ -320,192 +309,10 @@ function CheckSheet({ row, locationId, onClose, onSaved }) {
   )
 }
 
-/* ---------------- Move sheet ----------------
-   CheckSheet ginti ka natija likhta hai (absolute). Ye harkat likhta hai
-   (delta) — kitna aaya ya gaya, aur kyon. Do alag sawaal, do alag parche. */
-
-const DIRECTIONS = [
-  { key: 'in',  label: 'Stock in',  on: 'bg-mehndi text-white', verb: 'Add to display' },
-  { key: 'out', label: 'Stock out', on: 'bg-gulal text-white',  verb: 'Take off display' },
-]
-
-function MoveSheet({ row, locationId, onClose, onSaved }) {
-  const [direction, setDirection] = useState('in')
-  const [qty, setQty] = useState('')
-  const [reason, setReason] = useState('')
-  const [person, setPerson] = useState('')
-  const [notes, setNotes] = useState('')
-  const [file, setFile] = useState(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (row) {
-      setDirection('in'); setQty(''); setReason('')
-      setPerson(''); setNotes(''); setFile(null); setError('')
-    }
-  }, [row])
-
-  if (!row) return null
-
-  // Direction badalte hi reason list badal jaati hai — purana "sold"
-  // "Stock in" ke saath chala jaye, ye nahi hona chahiye.
-  function pickDirection(d) {
-    setDirection(d)
-    setReason('')
-  }
-
-  async function save() {
-    setError(''); setBusy(true)
-    try {
-      // Photo pehle upload — fail ho to stock ko haath hi nahi lagta
-      const photoUrl = file ? await uploadPhoto(file, 'checks') : null
-      await moveStock({
-        locationId,
-        itemId: row.item.id,
-        direction,
-        qty: Number(qty),
-        reason: reason || null,
-        personName: person.trim() || null,
-        photoUrl,
-        notes: notes.trim() || null,
-      })
-      onSaved()
-    } catch (e) {
-      // DB ke sandesh insaan ke liye likhe gaye hain — jyon ke tyon dikhao
-      setError(e.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const dir = DIRECTIONS.find((d) => d.key === direction)
-  const current = Number(row.actual_qty)
-  const entered = qty === '' ? null : Number(qty)
-  const outward = direction === 'out'
-
-  // Display par hai hi nahi, to nikaalega kahan se
-  const overdraw = outward && entered !== null && entered > current
-  // 0.1 + 0.2 wali float gandagi preview me nahi dikhni chahiye — step 0.001 hai
-  const next = entered === null ? null
-    : Math.round((current + (outward ? -entered : entered)) * 1000) / 1000
-
-  const needsPerson = outward && !person.trim()
-  const blocked = busy || qty === '' || entered <= 0 || overdraw || needsPerson
-
-  return (
-    <Modal
-      open={!!row}
-      onClose={onClose}
-      title={row.item.name}
-      footer={
-        <>
-          <button onClick={onClose} className="btn-ghost">Cancel</button>
-          <button onClick={save} disabled={blocked} className="btn-primary">
-            {busy ? 'Saving…' : dir.verb}
-          </button>
-        </>
-      }
-    >
-      <div className="flex items-center gap-3 mb-5">
-        <Thumb url={row.item.photo_url} name={row.item.name} size={52} />
-        <div>
-          <p className="num text-xs text-ink-45">{row.item.item_code}</p>
-          <p className="num text-sm mt-0.5">
-            On the display now <b>{fmt(row.actual_qty)}</b> {row.item.uom}
-          </p>
-        </div>
-      </div>
-
-      {/* Sabse bada faisla — dropdown me chhupane layak nahi */}
-      <div className="flex gap-2 mb-5">
-        {DIRECTIONS.map((d) => (
-          <button
-            key={d.key}
-            type="button"
-            aria-pressed={direction === d.key}
-            onClick={() => pickDirection(d.key)}
-            className={`flex-1 h-11 rounded-lg text-[15px] font-semibold transition-colors ${
-              direction === d.key ? d.on : 'btn-ghost'
-            }`}
-          >
-            {d.label}
-          </button>
-        ))}
-      </div>
-
-      <Field label={`Quantity (${row.item.uom})`}>
-        <input
-          type="number" min="0" step="0.001" inputMode="decimal" autoFocus
-          className="field num text-lg"
-          value={qty}
-          onChange={(e) => setQty(e.target.value)}
-        />
-      </Field>
-
-      <Field label="Reason">
-        <select
-          className="field [&>option]:text-[#14121A] [&>option]:bg-white"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-        >
-          <option value="">Not stated</option>
-          {MOVE_REASONS[direction].map(([k, label]) => (
-            <option key={k} value={k}>{label}</option>
-          ))}
-        </select>
-      </Field>
-
-      <Field
-        label={outward ? 'Handled by (required)' : 'Handled by'}
-        hint={outward
-          ? 'Stock leaving the display must be signed for.'
-          : 'Optional — helps when you review the log later.'}
-      >
-        <input className="field" placeholder="Name" value={person}
-          onChange={(e) => setPerson(e.target.value)} />
-      </Field>
-
-      <Field label="Photo" hint="Optional. Useful proof when something is missing.">
-        <input
-          type="file" accept="image/*" capture="environment"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          className="block w-full text-sm text-ink-70 file:mr-3 file:h-9 file:px-3
-                     file:rounded-lg file:border file:border-line file:bg-paper-sunk
-                     file:text-[13px] file:font-semibold file:text-ink"
-        />
-      </Field>
-
-      <Field label="Note">
-        <textarea rows={2} className="field h-auto py-2.5" placeholder="Anything worth recording"
-          value={notes} onChange={(e) => setNotes(e.target.value)} />
-      </Field>
-
-      {/* Save se pehle hi bata do result kya hoga — surprise nahi */}
-      {overdraw ? (
-        <p className="text-sm text-gulal">
-          Only {fmt(current)} on the display right now.
-        </p>
-      ) : next !== null && (
-        <div className="flex items-center gap-2">
-          <span className="num text-sm">
-            <span className="text-ink-45">{fmt(current)}</span>
-            <span className="mx-1.5 text-ink-45">→</span>
-            <b className="font-semibold">{fmt(next)}</b>
-          </span>
-          <StatusChip status={statusFor(next, row.expected_qty)} />
-        </div>
-      )}
-
-      <ErrorNote message={error} />
-    </Modal>
-  )
-}
-
 /* ---------------- Add item sheet ----------------
-   MoveSheet un cheezon ke liye hai jo display par pehle se hain. Ye us
-   pehle din ke liye hai jab cheez wahan pahunchti hai — catalog me se
-   chuno, ginti likho, aur andar. Reason yahan tay hai: 'new_stock'. */
+   Ye us pehle din ke liye hai jab cheez display par pahunchti hai — catalog
+   me se chuno, ginti likho, aur andar. Reason yahan tay hai: 'new_stock'.
+   Uske baad ki har ginti Count se hoti hai. */
 
 const RESULT_LIMIT = 40
 
@@ -533,7 +340,7 @@ function AddItemSheet({ open, locationId, stock, onClose, onSaved }) {
   }, [open])
 
   // Jo pehle se display par hai use is raste se dobara jodna uski ginti
-  // chupke se do guna kar dega. Aisi cheez ke liye Move hai.
+  // chupke se do guna kar dega. Aisi cheez ki ginti Count se badalti hai.
   const onDisplay = useMemo(
     () => new Set((stock ?? []).map((r) => r.item.id)),
     [stock])
@@ -598,7 +405,7 @@ function AddItemSheet({ open, locationId, stock, onClose, onSaved }) {
       ) : nothingLeft ? (
         <Empty
           title="Everything is already here"
-          hint="Every catalog item is already on this display. Use Move to change quantities."
+          hint="Every catalog item is already on this display. Use Count to change quantities."
         />
       ) : (
         <>
@@ -691,8 +498,8 @@ function Thumb({ url, name, size = 44 }) {
 // 20.000 ko 20 dikhao, 2.500 ko 2.5 — trailing zeros shor hain
 const fmt = (n) => Number(n).toString()
 
-/* Ginti ka natija kis khaane me girta hai. CheckSheet aur MoveSheet
-   dono yahi niyam lagate hain — do jagah likha to ek din alag ho jayega. */
+/* Ginti ka natija kis khaane me girta hai. Ek hi jagah likha hai —
+   do jagah likha to ek din alag ho jayega. */
 function statusFor(actual, expectedRaw) {
   const expected = Number(expectedRaw)
   const n = Number(actual)

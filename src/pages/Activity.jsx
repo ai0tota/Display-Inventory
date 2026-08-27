@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { jsPDF } from 'jspdf'
+import autoTable from 'jspdf-autotable'
 import { getAuditLog, getLocations } from '../lib/api'
-import { Spinner, Empty, ErrorNote, REASON_LABEL } from '../components/ui'
+import { useAuth } from '../lib/auth'
+import { Spinner, Empty, ErrorNote, ImageModal, REASON_LABEL } from '../components/ui'
 
 // Kya hua, seedhi bhasha me. DB ke action codes user ko dikhane layak nahi.
 const ACTION_LABEL = {
@@ -16,11 +19,14 @@ const ACTION_LABEL = {
 }
 
 export default function Activity() {
+  const { isAdmin } = useAuth()
   const [rows, setRows] = useState(null)
   const [locations, setLocations] = useState([])
   const [locationId, setLocationId] = useState('')
   const [action, setAction] = useState('')
   const [error, setError] = useState('')
+  const [viewingImage, setViewingImage] = useState(null)
+  const [pdfBusy, setPdfBusy] = useState(false)
 
   async function load() {
     setError('')
@@ -39,11 +45,15 @@ export default function Activity() {
     [rows, action]
   )
 
-  function exportCsv() {
-    const head = ['When', 'Company', 'Location', 'Item code', 'Item', 'What happened',
-                  'Expected before', 'Expected after', 'Counted before', 'Counted after', 'By', 'Note']
-    const body = visible.map((r) => [
-      new Date(r.created_at).toISOString(),
+  // CSV aur PDF dono ek hi tasveer dikhate hain — do jagah banate to
+  // ek din columns alag ho jate
+  const EXPORT_HEAD = ['When', 'Company', 'Location', 'Item code', 'Item', 'What happened',
+                       'Expected before', 'Expected after', 'Counted before', 'Counted after',
+                       'By', 'Note']
+
+  function exportRows(when) {
+    return visible.map((r) => [
+      when(r.created_at),
       r.location?.company?.code ?? '',
       r.location?.name ?? '',
       r.item?.item_code ?? '',
@@ -53,6 +63,11 @@ export default function Activity() {
       num(r.old_actual), num(r.new_actual),
       r.person_name ?? '', r.notes ?? '',
     ])
+  }
+
+  function exportCsv() {
+    const head = EXPORT_HEAD
+    const body = exportRows((ts) => new Date(ts).toISOString())
     // Har cell quote karo aur andar ke quotes double — warna item name me
     // aaya ek comma poori CSV ki columns hila deta hai
     const csv = [head, ...body]
@@ -67,6 +82,103 @@ export default function Activity() {
     URL.revokeObjectURL(url)
   }
 
+  // Bara table hai — portrait me columns kuchal jate hain, isliye landscape.
+  // Photos pehle data-URL me laate hain: jsPDF khud remote URL fetch nahi karta.
+  async function exportPdf() {
+    setPdfBusy(true)
+    setError('')
+    try {
+      const thumbs = await loadThumbs(visible.map((r) => r.item?.photo_url))
+
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
+      const printedOn = new Date()
+
+      doc.setFontSize(14)
+      doc.text('Display Activity', 40, 40)
+
+      doc.setFontSize(9)
+      doc.setTextColor(120)
+      const picked = locationId ? locations.find((l) => l.id === locationId) : null
+      const scope = [
+        picked ? `${picked.company.code} — ${picked.name}` : 'All locations',
+        action ? (ACTION_LABEL[action] ?? action) : 'Everything',
+        `${visible.length} ${visible.length === 1 ? 'entry' : 'entries'}`,
+        printedOn.toLocaleString('en-IN'),
+      ].join('  ·  ')
+      doc.text(scope, 40, 56)
+      doc.setTextColor(0)
+
+      const head = [...EXPORT_HEAD]
+      head.splice(PHOTO_COL, 0, 'Photo')
+
+      const body = exportRows((ts) =>
+        new Date(ts).toLocaleString('en-IN', {
+          day: 'numeric', month: 'short', year: 'numeric',
+          hour: '2-digit', minute: '2-digit',
+        })).map((row) => {
+          const cells = row.map((c) => (c === '' || c === null ? '' : String(c)))
+          cells.splice(PHOTO_COL, 0, '') // khaali khana — tasveer didDrawCell me chipakti hai
+          return cells
+        })
+
+      autoTable(doc, {
+        head: [head],
+        body,
+        startY: 72,
+        margin: { top: 72, left: 40, right: 40, bottom: 40 },
+        styles: { fontSize: 7.5, cellPadding: 3, overflow: 'linebreak', valign: 'middle' },
+        headStyles: { fillColor: [20, 18, 26], textColor: 255, fontStyle: 'bold', valign: 'middle' },
+        alternateRowStyles: { fillColor: [246, 245, 248] },
+        columnStyles: {
+          0: { cellWidth: 74 },                        // When
+          1: { cellWidth: 44 },                        // Company
+          2: { cellWidth: 72 },                        // Location
+          3: { cellWidth: 40, minCellHeight: THUMB_PT + 8 }, // Photo
+          4: { cellWidth: 52 },                        // Item code
+          5: { cellWidth: 110 },                       // Item
+          6: { cellWidth: 62 },                        // What happened
+          7: { cellWidth: 38, halign: 'right' },
+          8: { cellWidth: 38, halign: 'right' },
+          9: { cellWidth: 38, halign: 'right' },
+          10: { cellWidth: 38, halign: 'right' },
+          11: { cellWidth: 52 },                       // By
+          12: { cellWidth: 'auto' },                   // Note
+        },
+        didDrawCell: (data) => {
+          if (data.section !== 'body' || data.column.index !== PHOTO_COL) return
+          const src = thumbs.get(visible[data.row.index]?.item?.photo_url)
+          if (!src) return
+          // jsPDF ek hi data-URL ko dobara embed nahi karta, isliye repeat
+          // items file ka size nahi badhate
+          doc.addImage(
+            src, 'JPEG',
+            data.cell.x + (data.cell.width - THUMB_PT) / 2,
+            data.cell.y + (data.cell.height - THUMB_PT) / 2,
+            THUMB_PT, THUMB_PT,
+          )
+        },
+        didDrawPage: (data) => {
+          const { pageSize } = doc.internal
+          doc.setFontSize(8)
+          doc.setTextColor(140)
+          doc.text(
+            `Page ${data.pageNumber}`,
+            pageSize.getWidth() - 40,
+            pageSize.getHeight() - 20,
+            { align: 'right' },
+          )
+          doc.setTextColor(0)
+        },
+      })
+
+      doc.save(`display-activity-${printedOn.toISOString().slice(0, 10)}.pdf`)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setPdfBusy(false)
+    }
+  }
+
   return (
     <div className="p-5 lg:p-8 max-w-4xl">
       <div className="flex items-start justify-between gap-4">
@@ -77,7 +189,14 @@ export default function Activity() {
           </p>
         </div>
         {visible.length > 0 && (
-          <button onClick={exportCsv} className="btn-ghost btn-sm shrink-0">Export CSV</button>
+          <div className="flex gap-2 shrink-0">
+            <button onClick={exportCsv} className="btn-ghost btn-sm">Export CSV</button>
+            {isAdmin && (
+              <button onClick={exportPdf} disabled={pdfBusy} className="btn-ghost btn-sm">
+                {pdfBusy ? 'Building…' : 'Export PDF'}
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -109,10 +228,22 @@ export default function Activity() {
                   <span className="num text-xs text-ink-45 shrink-0">{when(r.created_at)}</span>
                 </div>
 
-                <p className="text-[15px] mt-1.5 truncate">
-                  {r.item?.name}
-                  <span className="num text-xs text-ink-45 ml-1.5">{r.item?.item_code}</span>
-                </p>
+                <div className="flex items-center gap-2.5 mt-1.5">
+                  {r.item?.photo_url && (
+                    <img
+                      src={r.item.photo_url}
+                      alt={r.item?.name || 'Item'}
+                      loading="lazy"
+                      onClick={() => setViewingImage(r.item?.photo_url)}
+                      className="w-8 h-8 rounded-md object-cover bg-paper-sunk shrink-0
+                                 cursor-zoom-in hover:opacity-90 transition-opacity"
+                    />
+                  )}
+                  <p className="text-[15px] truncate min-w-0">
+                    {r.item?.name}
+                    <span className="num text-xs text-ink-45 ml-1.5">{r.item?.item_code}</span>
+                  </p>
+                </div>
                 <p className="text-xs text-ink-45 mt-0.5">
                   {r.location?.company?.code} · {r.location?.name}
                 </p>
@@ -132,8 +263,9 @@ export default function Activity() {
                     {r.person_name && <span className="text-xs text-ink-70">{r.person_name}</span>}
                     {r.notes && <span className="text-xs text-ink-45 truncate">{r.notes}</span>}
                     {r.photo_url && (
-                      <a href={r.photo_url} target="_blank" rel="noreferrer"
-                        className="text-xs font-semibold text-neel ml-auto shrink-0">Photo</a>
+                      <button type="button" onClick={() => setViewingImage(r.photo_url)}
+                        className="text-xs font-semibold text-neel ml-auto shrink-0
+                                   cursor-zoom-in hover:opacity-90 transition-opacity">Photo</button>
                     )}
                   </div>
                 )}
@@ -142,8 +274,72 @@ export default function Activity() {
           </ul>
         )}
       </div>
+
+      <ImageModal src={viewingImage} onClose={() => setViewingImage(null)} />
     </div>
   )
+}
+
+/* ---------------- PDF thumbnails ----------------
+   jsPDF sirf wahi tasveer laga sakta hai jo pehle se memory me ho, isliye
+   har photo ko blob se object-URL par utha kar canvas se JPEG data-URL
+   banate hain. Object-URL same-origin hota hai — canvas taint nahi hota,
+   chahe storage bucket ke CORS headers kaisi bhi ho. */
+
+const PHOTO_COL = 3   // 'Item code' se theek pehle
+const THUMB_PT = 26   // PDF me chhapne ka naap (points)
+const THUMB_PX = 96   // 2x se thoda upar — print par saaf, file par halka
+const THUMB_CONCURRENCY = 6
+
+async function loadThumbs(urls) {
+  // Ek hi item bees baar log me aata hai — har URL sirf ek baar uthao
+  const unique = [...new Set(urls.filter(Boolean))]
+  const out = new Map()
+
+  for (let i = 0; i < unique.length; i += THUMB_CONCURRENCY) {
+    const batch = unique.slice(i, i + THUMB_CONCURRENCY)
+    const done = await Promise.all(batch.map(toJpegDataUrl))
+    batch.forEach((url, n) => { if (done[n]) out.set(url, done[n]) })
+  }
+  return out
+}
+
+// Ek photo na khule to poora PDF nahi rukna chahiye — us khane ko khaali
+// chhod dete hain
+async function toJpegDataUrl(url) {
+  let objectUrl
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    objectUrl = URL.createObjectURL(await res.blob())
+
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image()
+      el.onload = () => resolve(el)
+      el.onerror = () => reject(new Error('decode failed'))
+      el.src = objectUrl
+    })
+
+    const canvas = document.createElement('canvas')
+    canvas.width = THUMB_PX
+    canvas.height = THUMB_PX
+    const ctx = canvas.getContext('2d')
+    // JPEG me alpha nahi hota — safed background warna kaala pad jata hai
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, THUMB_PX, THUMB_PX)
+
+    // object-fit: cover — bina khinche bharo
+    const scale = Math.max(THUMB_PX / img.naturalWidth, THUMB_PX / img.naturalHeight)
+    const w = img.naturalWidth * scale
+    const h = img.naturalHeight * scale
+    ctx.drawImage(img, (THUMB_PX - w) / 2, (THUMB_PX - h) / 2, w, h)
+
+    return canvas.toDataURL('image/jpeg', 0.72)
+  } catch {
+    return null
+  } finally {
+    if (objectUrl) URL.revokeObjectURL(objectUrl)
+  }
 }
 
 function Movement({ delta, reason }) {
