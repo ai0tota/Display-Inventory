@@ -14,11 +14,18 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Supabase REST API
+      - name: Ping Supabase
         run: |
-          code=$(curl -s -o /dev/null -w "%{http_code}" \
-            "${{ secrets.SUPABASE_URL }}/rest/v1/companies?select=id&limit=1" \
-            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}")
+          # ping() RPC call kar rahe hain, kisi table ko nahi. anon ko
+          # koi table padhne ka haq jaan boojh kar nahi diya gaya --
+          # usme chhed karna is app ki security kam kar deta. ping()
+          # sirf 'ok' lautata hai, par DB round trip asli hai.
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/rpc/ping" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{}')
           echo "HTTP $code"
           # 200 = project chalu. Kuch aur = paused ya secret galat.
           [ "$code" = "200" ]
